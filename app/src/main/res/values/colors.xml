@@ -13,4 +13,5 @@
     <color name="ripple_on_dark">#33FFFFFF</color>
     <color name="tip_bg">#EEF2FF</color>
     <color name="tip_border">#C7D2FE</color>
+    <color name="scrim_on_media">#66000000</color>
 </resources>

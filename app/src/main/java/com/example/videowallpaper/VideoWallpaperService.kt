@@ -200,6 +200,11 @@ class VideoWallpaperService : WallpaperService() {
         }
 
         private fun playTransition() {
+            // No custom transition clip picked -> nothing bundled to fall back to, cut straight to Unlocked.
+            if (Slot.TRANSITION.optional && !VideoStore.hasCustom(this@VideoWallpaperService, Slot.TRANSITION)) {
+                showUnlocked()
+                return
+            }
             state = Slot.TRANSITION
             player?.apply {
                 repeatMode = Player.REPEAT_MODE_OFF

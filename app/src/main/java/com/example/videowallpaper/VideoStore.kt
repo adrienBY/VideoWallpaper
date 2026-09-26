@@ -12,9 +12,17 @@ enum class Slot(
     @RawRes val rawRes: Int,
     val title: String,
     val subtitle: String,
+    /** True if the app should skip this slot entirely (no bundled fallback) until the user picks a clip. */
+    val optional: Boolean = false,
 ) {
     LOCKED("idle_closed", R.raw.idle_closed, "Locked", "Loops while the screen is locked"),
-    TRANSITION("transition", R.raw.transition, "Unlock transition", "Plays once when you unlock"),
+    TRANSITION(
+        "transition",
+        R.raw.transition,
+        "Unlock transition",
+        "Optional — plays once when you unlock",
+        optional = true,
+    ),
     UNLOCKED("idle_open", R.raw.idle_open, "Unlocked", "Loops until the screen turns off"),
 }
 
@@ -43,8 +51,14 @@ object VideoStore {
     /** Bumped on every change so the wallpaper engine knows to reload. */
     fun version(c: Context): Long = prefs(c).getLong(KEY_VERSION, 0L)
 
-    fun label(c: Context, slot: Slot): String =
-        prefs(c).getString("name_${slot.id}", null)?.let { "Custom · $it" } ?: "Default clip"
+    fun label(c: Context, slot: Slot): String {
+        val name = prefs(c).getString("name_${slot.id}", null)
+        return when {
+            name != null -> "Custom · $name"
+            slot.optional -> "Not set · unlock cuts straight to Unlocked"
+            else -> "Default clip"
+        }
+    }
 
     fun importFrom(c: Context, slot: Slot, source: Uri) {
         val dest = customFile(c, slot)

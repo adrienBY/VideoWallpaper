@@ -9,6 +9,7 @@ import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.MediaMetadataRetriever
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -16,6 +17,7 @@ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowInsets
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -26,7 +28,13 @@ import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
 
-    private class Card(val thumb: ImageView, val status: TextView, val resetBtn: Button)
+    private class Card(
+        val thumb: ImageView,
+        val playBadge: View,
+        val emptyState: View,
+        val status: TextView,
+        val resetBtn: Button,
+    )
 
     private val cards = mutableMapOf<Slot, Card>()
 
@@ -64,6 +72,8 @@ class MainActivity : Activity() {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(18), dp(16), dp(18))
+            background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_header)
         }
         val badge = TextView(this).apply {
             text = "\u25B6"
@@ -192,7 +202,34 @@ class MainActivity : Activity() {
             background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_thumb)
             clipToOutline = true
         }
-        card.addView(thumb, LinearLayout.LayoutParams(MATCH_PARENT, dp(180)).apply { topMargin = dp(16) })
+        val playBadge = TextView(this).apply {
+            text = "▶"
+            textSize = 15f
+            setTextColor(color(R.color.on_accent))
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(ContextCompat.getColor(this@MainActivity, R.color.scrim_on_media))
+            }
+        }
+        val emptyState = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_thumb_empty)
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null) // dashed stroke needs software rendering
+            addView(label("+ Add a clip", 14f, R.color.text_muted, bold = true))
+            addView(
+                label("Optional — skipped if you don't set one", 12f, R.color.text_muted).apply {
+                    gravity = Gravity.CENTER
+                    setPadding(dp(24), dp(4), dp(24), 0)
+                },
+            )
+        }
+        val thumbFrame = FrameLayout(this)
+        thumbFrame.addView(thumb, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        thumbFrame.addView(playBadge, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER))
+        thumbFrame.addView(emptyState, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        card.addView(thumbFrame, LinearLayout.LayoutParams(MATCH_PARENT, dp(180)).apply { topMargin = dp(16) })
 
         val status = label("", 13f, R.color.text_secondary)
         card.addView(status, lp().apply { topMargin = dp(10); bottomMargin = dp(10) })
@@ -214,18 +251,34 @@ class MainActivity : Activity() {
         row.addView(reset, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
         card.addView(row)
 
-        cards[slot] = Card(thumb, status, reset)
+        cards[slot] = Card(thumb, playBadge, emptyState, status, reset)
         return card
     }
 
     private fun refresh(slot: Slot) {
         val c = cards[slot] ?: return
+        val hasCustom = VideoStore.hasCustom(this, slot)
         c.status.text = VideoStore.label(this, slot)
-        c.resetBtn.isEnabled = VideoStore.hasCustom(this, slot)
-        c.resetBtn.alpha = if (c.resetBtn.isEnabled) 1f else 0.4f
+        c.resetBtn.isEnabled = hasCustom
+        c.resetBtn.alpha = if (hasCustom) 1f else 0.4f
+
+        val showEmptyState = slot.optional && !hasCustom
+        c.emptyState.visibility = if (showEmptyState) View.VISIBLE else View.GONE
+        c.playBadge.visibility = if (showEmptyState) View.GONE else View.VISIBLE
+        if (showEmptyState) {
+            c.thumb.setImageDrawable(null)
+            return
+        }
+
         thread {
             val bmp = loadThumbnail(slot)
-            runOnUiThread { if (!isDestroyed) c.thumb.setImageBitmap(bmp) }
+            runOnUiThread {
+                if (!isDestroyed) {
+                    c.thumb.alpha = 0f
+                    c.thumb.setImageBitmap(bmp)
+                    c.thumb.animate().alpha(1f).setDuration(220).start()
+                }
+            }
         }
     }
 
@@ -270,7 +323,11 @@ class MainActivity : Activity() {
         setTypeface(typeface, Typeface.BOLD)
         background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_button_primary)
         setPadding(dp(16), dp(16), dp(16), dp(16))
-        elevation = dp(2).toFloat()
+        elevation = dp(6).toFloat()
+        if (Build.VERSION.SDK_INT >= 28) {
+            outlineAmbientShadowColor = color(R.color.accent)
+            outlineSpotShadowColor = color(R.color.accent)
+        }
         stateListAnimator = null
         setOnClickListener { onClick() }
     }
