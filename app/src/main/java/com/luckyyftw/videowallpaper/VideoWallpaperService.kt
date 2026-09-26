@@ -1,4 +1,4 @@
-package com.example.videowallpaper
+package com.luckyyftw.videowallpaper
 
 import android.app.KeyguardManager
 import android.content.BroadcastReceiver

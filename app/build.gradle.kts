@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.videowallpaper"
+    namespace = "com.luckyyftw.videowallpaper"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.videowallpaper"
+        applicationId = "com.luckyyftw.videowallpaper"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

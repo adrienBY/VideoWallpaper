@@ -1,4 +1,4 @@
-package com.example.videowallpaper
+package com.luckyyftw.videowallpaper
 
 import android.content.Context
 import android.content.Intent
@@ -32,7 +32,7 @@ object VideoStore {
     private const val KEY_VERSION = "version"
 
     /** Sent whenever a clip changes, so any running wallpaper engine can reload right away. */
-    const val ACTION_VIDEOS_CHANGED = "com.example.videowallpaper.VIDEOS_CHANGED"
+    const val ACTION_VIDEOS_CHANGED = "com.luckyyftw.videowallpaper.VIDEOS_CHANGED"
 
     private fun prefs(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
