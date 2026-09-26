@@ -3,11 +3,37 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Viewfinder-style corner brackets: reads as "video", not generic media -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M26,41 L26,26 L41,26" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M67,26 L82,26 L82,41" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M82,67 L82,82 L67,82" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M41,82 L26,82 L26,67" />
+    <!-- Play triangle -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M40,32 L40,76 L78,54 Z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:fillAlpha="0.35"
-        android:pathData="M28,32 L34,32 L34,76 L28,76 Z" />
+        android:pathData="M45,38 L45,70 L74,54 Z" />
 </vector>

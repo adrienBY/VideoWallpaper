@@ -217,6 +217,6 @@ class VideoWallpaperService : WallpaperService() {
 
     private companion object {
         const val TAG = "VideoWallpaper"
-        const val POLL_INTERVAL_MS = 800L
+        const val POLL_INTERVAL_MS = 1500L
     }
 }

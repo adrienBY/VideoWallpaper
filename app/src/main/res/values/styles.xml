@@ -5,4 +5,8 @@
         <item name="android:navigationBarColor">@color/bg_page</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
+
+    <style name="AppAlertDialog" parent="android:Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">@color/accent</item>
+    </style>
 </resources>

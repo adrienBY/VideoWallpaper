@@ -101,6 +101,23 @@ class MainActivity : Activity() {
             label("Open source \u00B7 MIT license", 12f, R.color.text_muted).apply { gravity = Gravity.CENTER },
             lp().apply { topMargin = dp(22) },
         )
+
+        animateIn(col)
+    }
+
+    /** Staggered fade + rise for each top-level section, so the screen feels alive on open. */
+    private fun animateIn(container: LinearLayout) {
+        for (i in 0 until container.childCount) {
+            val child = container.getChildAt(i)
+            child.alpha = 0f
+            child.translationY = dp(16).toFloat()
+            child.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setStartDelay(i * 45L)
+                .setDuration(320)
+                .start()
+        }
     }
 
     /** Soft callout reminding the user which option to tap in the system picker. */
@@ -136,7 +153,7 @@ class MainActivity : Activity() {
      * (wording varies by OEM) and picking the first one silently skips the lock screen.
      */
     private fun confirmAndSetWallpaper() {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, R.style.AppAlertDialog)
             .setTitle("One thing before you continue")
             .setMessage(
                 "On the next screen, Android will ask where to apply this wallpaper.\n\n" +
