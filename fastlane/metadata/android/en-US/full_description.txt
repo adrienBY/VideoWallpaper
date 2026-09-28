@@ -1,0 +1,9 @@
+Open-source live wallpaper that plays a different video clip depending on your lock state.
+
+- Locked: loops while the screen is locked or off
+- Unlock transition: optional, plays once when you unlock (only if you've picked a clip for it)
+- Unlocked: loops after unlocking, until the screen turns off
+
+Pick your own video for each state, or use the bundled defaults. Videos are copied into the app's private storage - nothing is uploaded anywhere.
+
+No network access, no permissions requested, no ads, no tracking. Built with Kotlin and Media3 ExoPlayer only.
