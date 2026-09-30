@@ -5,6 +5,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -43,6 +46,27 @@ class VideoWallpaperService : WallpaperService() {
                 // (which some OEMs send late, after the unlock animation).
                 val fast = visible && state == Slot.LOCKED
                 handler.postDelayed(this, if (fast) FAST_POLL_MS else POLL_INTERVAL_MS)
+            }
+        }
+
+        // Where the Locked clip "settles" (its burst ends and it holds still), in ms.
+        // 0 = a normal looping clip, so unlocking switches immediately.
+        private var lockedSettleMs = 0L
+        private var pendingTransition = false
+        // If you unlock while the Locked burst is still playing, let it finish
+        // (sped up) and only then start the transition, so there's no jump cut.
+        private val settleWatcher = object : Runnable {
+            override fun run() {
+                if (!pendingTransition) return
+                val p = player ?: return
+                if (state != Slot.LOCKED || !visible ||
+                    p.currentPosition >= lockedSettleMs - SETTLE_TOLERANCE_MS) {
+                    pendingTransition = false
+                    p.setPlaybackSpeed(1f)
+                    if (state == Slot.LOCKED) startTransition()
+                } else {
+                    handler.postDelayed(this, 8)
+                }
             }
         }
 
@@ -158,6 +182,7 @@ class VideoWallpaperService : WallpaperService() {
 
         override fun onDestroy() {
             handler.removeCallbacks(keyguardPoller)
+            handler.removeCallbacks(settleWatcher)
             unregisterReceiver(receiver)
             player?.removeListener(listener)
             player?.release()
@@ -168,6 +193,7 @@ class VideoWallpaperService : WallpaperService() {
         private fun loadItems() {
             loadedVersion = VideoStore.version(this@VideoWallpaperService)
             lockedItem = item(Slot.LOCKED)
+            lockedSettleMs = settlePointMs(VideoStore.uriFor(this@VideoWallpaperService, Slot.LOCKED))
             transitionItem = item(Slot.TRANSITION)
             unlockedItem = item(Slot.UNLOCKED)
         }
@@ -188,7 +214,10 @@ class VideoWallpaperService : WallpaperService() {
 
         private fun showLocked() {
             state = Slot.LOCKED
+            pendingTransition = false
+            handler.removeCallbacks(settleWatcher)
             player?.apply {
+                setPlaybackSpeed(1f)
                 repeatMode = Player.REPEAT_MODE_ONE
                 setMediaItem(lockedItem)
                 prepare()
@@ -207,6 +236,54 @@ class VideoWallpaperService : WallpaperService() {
         }
 
         private fun playTransition() {
+            if (pendingTransition) return
+            val p = player
+            if (state == Slot.LOCKED && visible && p != null && lockedSettleMs > 0 &&
+                p.currentMediaItem?.mediaId == Slot.LOCKED.id &&
+                p.currentPosition < lockedSettleMs - SETTLE_TOLERANCE_MS
+            ) {
+                pendingTransition = true
+                p.setPlaybackSpeed(CATCH_UP_SPEED)
+                handler.post(settleWatcher)
+                return
+            }
+            startTransition()
+        }
+
+        /**
+         * Finds where a "burst then hold" clip settles: the first big gap between
+         * video frames (the hold is stored as sparse frames). Returns 0 if none.
+         */
+        private fun settlePointMs(uri: Uri): Long {
+            val ex = MediaExtractor()
+            return try {
+                ex.setDataSource(this@VideoWallpaperService, uri, null)
+                val track = (0 until ex.trackCount).firstOrNull {
+                    ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
+                } ?: return 0L
+                ex.selectTrack(track)
+                val times = ArrayList<Long>()
+                while (times.size < 20000) {
+                    val t = ex.sampleTime
+                    if (t < 0) break
+                    times.add(t)
+                    if (!ex.advance()) break
+                }
+                times.sort()
+                var settle = 0L
+                for (i in 1 until times.size) {
+                    if (times[i] - times[i - 1] > 250_000L) { settle = times[i - 1] / 1000; break }
+                }
+                settle
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not scan locked clip", e)
+                0L
+            } finally {
+                ex.release()
+            }
+        }
+
+        private fun startTransition() {
             // No custom transition clip picked -> nothing bundled to fall back to, cut straight to Unlocked.
             if (Slot.TRANSITION.optional && !VideoStore.hasCustom(this@VideoWallpaperService, Slot.TRANSITION)) {
                 showUnlocked()
@@ -226,5 +303,7 @@ class VideoWallpaperService : WallpaperService() {
         const val TAG = "VideoWallpaper"
         const val POLL_INTERVAL_MS = 1500L
         const val FAST_POLL_MS = 50L
+        const val CATCH_UP_SPEED = 3f
+        const val SETTLE_TOLERANCE_MS = 20L
     }
 }
