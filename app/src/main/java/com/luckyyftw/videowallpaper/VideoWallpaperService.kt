@@ -38,7 +38,11 @@ class VideoWallpaperService : WallpaperService() {
         private val keyguardPoller = object : Runnable {
             override fun run() {
                 checkKeyguardState()
-                handler.postDelayed(this, POLL_INTERVAL_MS)
+                // Poll fast only while the lock screen is showing, so an unlock
+                // is caught within ~50 ms instead of waiting for USER_PRESENT
+                // (which some OEMs send late, after the unlock animation).
+                val fast = visible && state == Slot.LOCKED
+                handler.postDelayed(this, if (fast) FAST_POLL_MS else POLL_INTERVAL_MS)
             }
         }
 
@@ -142,6 +146,9 @@ class VideoWallpaperService : WallpaperService() {
 
         override fun onVisibilityChanged(visible: Boolean) {
             this.visible = visible
+            // Restart the poller so it switches speed right away.
+            handler.removeCallbacks(keyguardPoller)
+            handler.post(keyguardPoller)
             if (visible) {
                 // user may have changed clips in the app while we were hidden
                 reloadIfChanged()
@@ -218,5 +225,6 @@ class VideoWallpaperService : WallpaperService() {
     private companion object {
         const val TAG = "VideoWallpaper"
         const val POLL_INTERVAL_MS = 1500L
+        const val FAST_POLL_MS = 50L
     }
 }
