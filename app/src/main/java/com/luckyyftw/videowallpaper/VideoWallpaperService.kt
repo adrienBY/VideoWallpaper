@@ -52,6 +52,10 @@ class VideoWallpaperService : WallpaperService() {
         // Where the Locked clip "settles" (its burst ends and it holds still), in ms.
         // 0 = a normal looping clip, so unlocking switches immediately.
         private var lockedSettleMs = 0L
+        // Optional: start of a "pass-through" copy of the burst stored after the hold
+        // in the same Locked file. It plays the burst without stopping and flows
+        // straight into the unlock burst. -1 = not present.
+        private var lockedPassStartMs = -1L
         private var pendingTransition = false
         // If you unlock while the Locked burst is still playing, let it finish
         // (sped up) and only then start the transition, so there's no jump cut.
@@ -193,7 +197,7 @@ class VideoWallpaperService : WallpaperService() {
         private fun loadItems() {
             loadedVersion = VideoStore.version(this@VideoWallpaperService)
             lockedItem = item(Slot.LOCKED)
-            lockedSettleMs = settlePointMs(VideoStore.uriFor(this@VideoWallpaperService, Slot.LOCKED))
+            scanLocked(VideoStore.uriFor(this@VideoWallpaperService, Slot.LOCKED))
             transitionItem = item(Slot.TRANSITION)
             unlockedItem = item(Slot.UNLOCKED)
         }
@@ -207,7 +211,7 @@ class VideoWallpaperService : WallpaperService() {
         private fun applyState() {
             when (state) {
                 Slot.LOCKED -> showLocked()
-                Slot.TRANSITION -> playTransition()
+                Slot.TRANSITION -> startTransition()
                 Slot.UNLOCKED -> showUnlocked()
             }
         }
@@ -219,7 +223,7 @@ class VideoWallpaperService : WallpaperService() {
             player?.apply {
                 setPlaybackSpeed(1f)
                 repeatMode = Player.REPEAT_MODE_ONE
-                setMediaItem(lockedItem)
+                setMediaItems(listOf(lockedItem, unlockedItem))
                 prepare()
                 playWhenReady = visible
             }
@@ -236,14 +240,27 @@ class VideoWallpaperService : WallpaperService() {
         }
 
         private fun playTransition() {
-            if (pendingTransition) return
+            // Unlock is reported twice (fast poller + USER_PRESENT broadcast).
+            // Only the first one counts; a second call used to restart the
+            // transition mid-play, which looked like a stutter.
+            if (pendingTransition || state != Slot.LOCKED) return
             val p = player
             if (state == Slot.LOCKED && visible && p != null && lockedSettleMs > 0 &&
                 p.currentMediaItem?.mediaId == Slot.LOCKED.id &&
                 p.currentPosition < lockedSettleMs - SETTLE_TOLERANCE_MS
             ) {
+                val pos = p.currentPosition
+                if (lockedPassStartMs > 0 && pos < lockedSettleMs - LOCK_EASE_MS) {
+                    // Jump to the same moment in the pass-through copy: identical
+                    // frames, but it keeps flying into the unlock burst instead of stopping.
+                    state = Slot.TRANSITION
+                    p.repeatMode = Player.REPEAT_MODE_OFF
+                    p.seekTo(lockedPassStartMs + pos + SEEK_LEAD_MS)
+                    return
+                }
+                // Already slowing into the freeze (or no pass-through): let it finish.
                 pendingTransition = true
-                p.setPlaybackSpeed(CATCH_UP_SPEED)
+                p.setPlaybackSpeed(if (lockedPassStartMs > 0) 1f else CATCH_UP_SPEED)
                 handler.post(settleWatcher)
                 return
             }
@@ -251,33 +268,39 @@ class VideoWallpaperService : WallpaperService() {
         }
 
         /**
-         * Finds where a "burst then hold" clip settles: the first big gap between
-         * video frames (the hold is stored as sparse frames). Returns 0 if none.
+         * Scans the Locked clip's frame timestamps. A clip made as
+         * "burst, hold (sparse frames), [pass-through]" gives:
+         *  - settle = where the hold starts (first big gap between frames)
+         *  - pass-through start = where dense frames resume after the hold
+         * A normal looping clip has no gap: settle = 0, no pass-through.
          */
-        private fun settlePointMs(uri: Uri): Long {
+        private fun scanLocked(uri: Uri) {
+            lockedSettleMs = 0L
+            lockedPassStartMs = -1L
             val ex = MediaExtractor()
-            return try {
+            try {
                 ex.setDataSource(this@VideoWallpaperService, uri, null)
                 val track = (0 until ex.trackCount).firstOrNull {
                     ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
-                } ?: return 0L
+                } ?: return
                 ex.selectTrack(track)
                 val times = ArrayList<Long>()
-                while (times.size < 20000) {
+                while (times.size < 50000) {
                     val t = ex.sampleTime
                     if (t < 0) break
                     times.add(t)
                     if (!ex.advance()) break
                 }
                 times.sort()
-                var settle = 0L
-                for (i in 1 until times.size) {
-                    if (times[i] - times[i - 1] > 250_000L) { settle = times[i - 1] / 1000; break }
-                }
-                settle
+                var i = 1
+                while (i < times.size && times[i] - times[i - 1] <= 250_000L) i++
+                if (i >= times.size) return
+                lockedSettleMs = times[i - 1] / 1000
+                // skip the sparse hold, find where frames get dense again
+                while (i + 1 < times.size && times[i + 1] - times[i] > 100_000L) i++
+                if (i + 1 < times.size) lockedPassStartMs = times[i] / 1000
             } catch (e: Exception) {
                 Log.w(TAG, "Could not scan locked clip", e)
-                0L
             } finally {
                 ex.release()
             }
@@ -303,7 +326,9 @@ class VideoWallpaperService : WallpaperService() {
         const val TAG = "VideoWallpaper"
         const val POLL_INTERVAL_MS = 1500L
         const val FAST_POLL_MS = 50L
-        const val CATCH_UP_SPEED = 3f
+        const val CATCH_UP_SPEED = 2f
+        const val LOCK_EASE_MS = 710L   // length of the slowdown at the end of my lock bursts
+        const val SEEK_LEAD_MS = 16L
         const val SETTLE_TOLERANCE_MS = 20L
     }
 }
