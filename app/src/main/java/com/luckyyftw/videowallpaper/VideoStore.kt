@@ -24,6 +24,13 @@ enum class Slot(
         optional = true,
     ),
     UNLOCKED("idle_open", R.raw.idle_open, "Unlocked", "Loops until the screen turns off"),
+    MIDBURST(
+        "midburst",
+        R.raw.transition,
+        "Mid-burst unlock",
+        "Optional — continuous version used if you unlock while Locked is still moving",
+        optional = true,
+    ),
 }
 
 /** Custom clips live in filesDir/videos/. Missing slot -> bundled res/raw default. */
@@ -55,6 +62,7 @@ object VideoStore {
         val name = prefs(c).getString("name_${slot.id}", null)
         return when {
             name != null -> "Custom · $name"
+            slot == Slot.MIDBURST -> "Not set · unlocking mid-burst waits for the freeze"
             slot.optional -> "Not set · unlock cuts straight to Unlocked"
             else -> "Default clip"
         }

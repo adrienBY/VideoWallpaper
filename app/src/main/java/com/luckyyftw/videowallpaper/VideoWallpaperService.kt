@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -52,10 +53,11 @@ class VideoWallpaperService : WallpaperService() {
         // Where the Locked clip "settles" (its burst ends and it holds still), in ms.
         // 0 = a normal looping clip, so unlocking switches immediately.
         private var lockedSettleMs = 0L
-        // Optional: start of a "pass-through" copy of the burst stored after the hold
-        // in the same Locked file. It plays the burst without stopping and flows
-        // straight into the unlock burst. -1 = not present.
-        private var lockedPassStartMs = -1L
+        // Optional "Mid-burst unlock" clip: the Locked burst without the stop, flowing
+        // straight into the unlock burst. Its title metadata can hold a time map
+        // ("vwmap:" + Locked-time -> mid-burst-time every MAP_STEP_MS).
+        private var midItem: MediaItem? = null
+        private var midMap: LongArray? = null
         private var pendingTransition = false
         // If you unlock while the Locked burst is still playing, let it finish
         // (sped up) and only then start the transition, so there's no jump cut.
@@ -200,6 +202,41 @@ class VideoWallpaperService : WallpaperService() {
             scanLocked(VideoStore.uriFor(this@VideoWallpaperService, Slot.LOCKED))
             transitionItem = item(Slot.TRANSITION)
             unlockedItem = item(Slot.UNLOCKED)
+            midItem = null
+            midMap = null
+            if (VideoStore.hasCustom(this@VideoWallpaperService, Slot.MIDBURST)) {
+                midItem = item(Slot.MIDBURST)
+                midMap = readMidMap(VideoStore.uriFor(this@VideoWallpaperService, Slot.MIDBURST))
+            }
+        }
+
+        private fun readMidMap(uri: Uri): LongArray? {
+            val r = MediaMetadataRetriever()
+            return try {
+                r.setDataSource(this@VideoWallpaperService, uri)
+                val t = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: return null
+                if (!t.startsWith("vwmap:")) return null
+                t.removePrefix("vwmap:").split(',').map { it.trim().toLong() }.toLongArray()
+            } catch (e: Exception) {
+                Log.w(TAG, "No time map in mid-burst clip", e)
+                null
+            } finally {
+                r.release()
+            }
+        }
+
+        /** Where to start the mid-burst clip when unlocking at Locked time [ms], or null. */
+        private fun midTimeFor(ms: Long): Long? {
+            val map = midMap
+            if (map != null && map.isNotEmpty()) {
+                val f = ms.toDouble() / MAP_STEP_MS
+                val i = f.toInt()
+                if (i >= map.size - 1) return map.last()
+                val w = f - i
+                return (map[i] * (1 - w) + map[i + 1] * w).toLong()
+            }
+            // No map: assume identical timing until the slowdown starts.
+            return if (ms < lockedSettleMs - LOCK_EASE_MS) ms else null
         }
 
         private fun item(slot: Slot): MediaItem =
@@ -212,7 +249,7 @@ class VideoWallpaperService : WallpaperService() {
             when (state) {
                 Slot.LOCKED -> showLocked()
                 Slot.TRANSITION -> startTransition()
-                Slot.UNLOCKED -> showUnlocked()
+                Slot.UNLOCKED, Slot.MIDBURST -> showUnlocked()
             }
         }
 
@@ -223,7 +260,7 @@ class VideoWallpaperService : WallpaperService() {
             player?.apply {
                 setPlaybackSpeed(1f)
                 repeatMode = Player.REPEAT_MODE_ONE
-                setMediaItems(listOf(lockedItem, unlockedItem))
+                setMediaItems(listOfNotNull(lockedItem, midItem, unlockedItem))
                 prepare()
                 playWhenReady = visible
             }
@@ -250,17 +287,18 @@ class VideoWallpaperService : WallpaperService() {
                 p.currentPosition < lockedSettleMs - SETTLE_TOLERANCE_MS
             ) {
                 val pos = p.currentPosition
-                if (lockedPassStartMs > 0 && pos < lockedSettleMs - LOCK_EASE_MS) {
-                    // Jump to the same moment in the pass-through copy: identical
-                    // frames, but it keeps flying into the unlock burst instead of stopping.
+                val q = if (midItem != null && p.mediaItemCount > 1) midTimeFor(pos + SEEK_LEAD_MS) else null
+                if (q != null) {
+                    // Jump to the matching moment of the mid-burst clip: same picture,
+                    // but it keeps flying into the unlock burst instead of stopping.
                     state = Slot.TRANSITION
                     p.repeatMode = Player.REPEAT_MODE_OFF
-                    p.seekTo(lockedPassStartMs + pos + SEEK_LEAD_MS)
+                    p.seekTo(1, q)
                     return
                 }
-                // Already slowing into the freeze (or no pass-through): let it finish.
+                // No mid-burst clip: let the burst finish, then play the transition.
                 pendingTransition = true
-                p.setPlaybackSpeed(if (lockedPassStartMs > 0) 1f else CATCH_UP_SPEED)
+                p.setPlaybackSpeed(CATCH_UP_SPEED)
                 handler.post(settleWatcher)
                 return
             }
@@ -276,7 +314,6 @@ class VideoWallpaperService : WallpaperService() {
          */
         private fun scanLocked(uri: Uri) {
             lockedSettleMs = 0L
-            lockedPassStartMs = -1L
             val ex = MediaExtractor()
             try {
                 ex.setDataSource(this@VideoWallpaperService, uri, null)
@@ -296,9 +333,6 @@ class VideoWallpaperService : WallpaperService() {
                 while (i < times.size && times[i] - times[i - 1] <= 250_000L) i++
                 if (i >= times.size) return
                 lockedSettleMs = times[i - 1] / 1000
-                // skip the sparse hold, find where frames get dense again
-                while (i + 1 < times.size && times[i + 1] - times[i] > 100_000L) i++
-                if (i + 1 < times.size) lockedPassStartMs = times[i] / 1000
             } catch (e: Exception) {
                 Log.w(TAG, "Could not scan locked clip", e)
             } finally {
@@ -328,7 +362,8 @@ class VideoWallpaperService : WallpaperService() {
         const val FAST_POLL_MS = 50L
         const val CATCH_UP_SPEED = 2f
         const val LOCK_EASE_MS = 710L   // length of the slowdown at the end of my lock bursts
-        const val SEEK_LEAD_MS = 16L
+        const val SEEK_LEAD_MS = 40L
+        const val MAP_STEP_MS = 10L
         const val SETTLE_TOLERANCE_MS = 20L
     }
 }
